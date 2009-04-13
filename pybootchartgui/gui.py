@@ -58,6 +58,7 @@ class PyBootchartWidget(gtk.DrawingArea):
                 cr.scale(self.zoom_ratio, self.zoom_ratio)
                 cr.translate(-self.x, -self.y)
 		self.process_coordinate_map = draw.render(cr, *self.res)
+		print self.process_coordinate_map
 
 	def position_changed(self):
 		self.emit("position-changed", self.x, self.y)
@@ -150,7 +151,7 @@ class PyBootchartWidget(gtk.DrawingArea):
 			pandbbox = self.process_coordinate_map.lookup_with_bounding_box(x, y)
 			if pandbbox:
 				self.current_bounding_box = pandbbox[1]
-				print pandbbox[0].cmd
+				print pandbbox[0].cmd, str(pandbbox[1])
 			
                 return True
 

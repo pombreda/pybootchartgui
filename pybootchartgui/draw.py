@@ -289,13 +289,11 @@ def draw_process_bar_chart(ctx, proc_tree, curr_y, w, h):
         
 	y = curr_y+60
 	process_coordinate_map_children = []
-	bounding_box = None
 	for root in proc_tree.process_tree:        
 		cx, cy, pcmap = draw_processes_recursively(ctx, root, proc_tree, y, proc_h, chart_rect)
 		y  = y + proc_h * proc_tree.num_nodes([root])
 		process_coordinate_map_children.append(pcmap)
-		bounding_box = _join_bounding_boxes(bounding_box, (cx, cy, cx+_process_width(root,proc_tree, chart_rect[2]), y))
-	return ProcessCoordinateMap(bounding_box, None, process_coordinate_map_children)
+	return ProcessCoordinateMap((0,0,0,0), None, process_coordinate_map_children)
 
 
 def draw_processes_recursively(ctx, proc, proc_tree, y, proc_h, rect):
@@ -304,19 +302,17 @@ def draw_processes_recursively(ctx, proc, proc_tree, y, proc_h, rect):
 
 	draw_process_activity_colors(ctx, proc, proc_tree, x, y, w, proc_h, rect)
 	draw_rect(ctx, PROC_BORDER_COLOR, (x, y, w, proc_h))
-	draw_label_in_box(ctx, PROC_TEXT_COLOR, str(proc.pid)+":"+proc.cmd, x, y + proc_h - 4, w, rect[0] + rect[2])
+	draw_label_in_box(ctx, PROC_TEXT_COLOR, proc.cmd, x, y + proc_h - 4, w, rect[0] + rect[2])
 
 	next_y = y + proc_h
         pcmap_children = []
-	bounding_box = (x, y, x+w, next_y)
 	for child in proc.child_list:
 		child_x, child_y, pcmap = draw_processes_recursively(ctx, child, proc_tree, next_y, proc_h, rect)
 		draw_process_connecting_lines(ctx, x, y, child_x, child_y, proc_h)
 		next_y = next_y + proc_h * proc_tree.num_nodes([child])
                 pcmap_children.append(pcmap)
-		bounding_box = _join_bounding_boxes(bounding_box, (x, child_y, x+_process_width(child,proc_tree,rect[2]), next_y))
 
-	return x, y, ProcessCoordinateMap(bounding_box, proc, pcmap_children)
+	return x, y, ProcessCoordinateMap((x, y, x+w, y+proc_h), proc, pcmap_children)
 
 
 def _process_width(proc, proc_tree, chart_width):
@@ -375,18 +371,22 @@ class ProcessCoordinateMap:
 		self.bounding_box = bounding_box
 		self.process = process
 		self.children = children
+		self.region = reduce(_join_bounding_boxes, [c.region for c in children], self.bounding_box)
 
 	def __str__(self):
-		p1 = "%s -> %s" % (str(self.bounding_box), self.process.cmd if self.process else "none")
+		p1 = "%s\n%s -> %s" % (str(self.region), str(self.bounding_box), self.process.cmd if self.process else "none")
 		p2 = [ str(c) for c in self.children ]
 		return "\n".join([p1] + p2)
 
 	def lookup_with_bounding_box(self, x, y):
-		if in_bounding_box(self.bounding_box, x, y):
+		if in_bounding_box(self.region, x, y):
 			for c in self.children:
 				pandbbox = c.lookup_with_bounding_box(x,y)
 				if pandbbox: return pandbbox
-			return self.process, self.bounding_box
+			if in_bounding_box(self.bounding_box, x, y):
+				return self.process, self.bounding_box
+			else:
+				return None
 		else:
 			return None
 	def lookup(self, x, y):
