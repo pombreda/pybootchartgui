@@ -80,6 +80,10 @@ class Process:
 	def get_end_time(self):
 		return self.start_time + self.duration
 
+class MergedProcess(Process):
+	def __init__(self, pid, cmd, ppid, start_time):
+		Process.__init__(pid, cmd, ppid, start_time)
+
 class DiskSample:
 	def __init__(self, time, read, write, util):
 		self.time = time

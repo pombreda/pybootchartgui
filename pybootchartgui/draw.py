@@ -245,27 +245,11 @@ def render(ctx, headers, cpu_stats, disk_stats, proc_tree):
 
 
 	# draw process boxes
-	draw_process_bar_chart(ctx, proc_tree, curr_y + bar_h, w, h)
+	process_coordinate_map = draw_process_bar_chart(ctx, proc_tree, curr_y + bar_h, w, h)
 
 	ctx.set_font_size(SIG_FONT_SIZE)
 	draw_text(ctx, SIGNATURE, SIG_COLOR, off_x + 5, h - off_y - 5)
-	
-def draw_process_bar_chart(ctx, proc_tree, curr_y, w, h):
-	draw_legend_box(ctx, "Running (%cpu)", 		PROC_COLOR_R, off_x    , curr_y + 45, leg_s)		
-	draw_legend_box(ctx, "Unint.sleep (I/O)", 	PROC_COLOR_D, off_x+120, curr_y + 45, leg_s)
-	draw_legend_box(ctx, "Sleeping", 		PROC_COLOR_S, off_x+240, curr_y + 45, leg_s)
-	draw_legend_box(ctx, "Zombie", 			PROC_COLOR_Z, off_x+360, curr_y + 45, leg_s)
-	
-	chart_rect = [off_x, curr_y+60, w, h - 2 * off_y - (curr_y+60) + proc_h]
-	ctx.set_font_size(PROC_TEXT_FONT_SIZE)
-	
-	draw_box_ticks(ctx, chart_rect, sec_w)
-	draw_5sec_labels(ctx, chart_rect, sec_w)
-        
-	y = curr_y+60
-	for root in proc_tree.process_tree:        
-		draw_processes_recursively(ctx, root, proc_tree, y, proc_h, chart_rect)
-		y  = y + proc_h * proc_tree.num_nodes([root])
+	return process_coordinate_map
 
 
 def draw_header(ctx, headers, off_x, duration):
@@ -290,22 +274,53 @@ def draw_header(ctx, headers, off_x, duration):
 
     return header_y
 
-def draw_processes_recursively(ctx, proc, proc_tree, y, proc_h, rect) :
+
+def draw_process_bar_chart(ctx, proc_tree, curr_y, w, h):
+	draw_legend_box(ctx, "Running (%cpu)", 		PROC_COLOR_R, off_x    , curr_y + 45, leg_s)		
+	draw_legend_box(ctx, "Unint.sleep (I/O)", 	PROC_COLOR_D, off_x+120, curr_y + 45, leg_s)
+	draw_legend_box(ctx, "Sleeping", 		PROC_COLOR_S, off_x+240, curr_y + 45, leg_s)
+	draw_legend_box(ctx, "Zombie", 			PROC_COLOR_Z, off_x+360, curr_y + 45, leg_s)
+	
+	chart_rect = [off_x, curr_y+60, w, h - 2 * off_y - (curr_y+60) + proc_h]
+	ctx.set_font_size(PROC_TEXT_FONT_SIZE)
+	
+	draw_box_ticks(ctx, chart_rect, sec_w)
+	draw_5sec_labels(ctx, chart_rect, sec_w)
+        
+	y = curr_y+60
+	process_coordinate_map_children = []
+	bounding_box = None
+	for root in proc_tree.process_tree:        
+		cx, cy, pcmap = draw_processes_recursively(ctx, root, proc_tree, y, proc_h, chart_rect)
+		y  = y + proc_h * proc_tree.num_nodes([root])
+		process_coordinate_map_children.append(pcmap)
+		bounding_box = _join_bounding_boxes(bounding_box, (cx, cy, cx+_process_width(root,proc_tree, chart_rect[2]), y))
+	return ProcessCoordinateMap(bounding_box, None, process_coordinate_map_children)
+
+
+def draw_processes_recursively(ctx, proc, proc_tree, y, proc_h, rect):
 	x = rect[0] +  ((proc.start_time - proc_tree.start_time) * rect[2] / proc_tree.duration)
-	w = ((proc.duration) * rect[2] / proc_tree.duration)
+	w = _process_width(proc, proc_tree, rect[2])
 
 	draw_process_activity_colors(ctx, proc, proc_tree, x, y, w, proc_h, rect)
 	draw_rect(ctx, PROC_BORDER_COLOR, (x, y, w, proc_h))
-	draw_label_in_box(ctx, PROC_TEXT_COLOR, proc.cmd, x, y + proc_h - 4, w, rect[0] + rect[2])
+	draw_label_in_box(ctx, PROC_TEXT_COLOR, str(proc.pid)+":"+proc.cmd, x, y + proc_h - 4, w, rect[0] + rect[2])
 
 	next_y = y + proc_h
+        pcmap_children = []
+	bounding_box = (x, y, x+w, next_y)
 	for child in proc.child_list:
-		child_x, child_y = draw_processes_recursively(ctx, child, proc_tree, next_y, proc_h, rect)
+		child_x, child_y, pcmap = draw_processes_recursively(ctx, child, proc_tree, next_y, proc_h, rect)
 		draw_process_connecting_lines(ctx, x, y, child_x, child_y, proc_h)
 		next_y = next_y + proc_h * proc_tree.num_nodes([child])
-		
-	return x, y
+                pcmap_children.append(pcmap)
+		bounding_box = _join_bounding_boxes(bounding_box, (x, child_y, x+_process_width(child,proc_tree,rect[2]), next_y))
 
+	return x, y, ProcessCoordinateMap(bounding_box, proc, pcmap_children)
+
+
+def _process_width(proc, proc_tree, chart_width):
+	return (proc.duration) * chart_width / proc_tree.duration
 
 def draw_process_activity_colors(ctx, proc, proc_tree, x, y, w, proc_h, rect):
 	draw_fill_rect(ctx, PROC_COLOR_S, (x, y, w, proc_h))
@@ -347,3 +362,58 @@ def draw_process_connecting_lines(ctx, px, py, x, y, proc_h):
 		ctx.line_to(px, py)
 	ctx.stroke()
         ctx.set_dash([])
+
+
+class ProcessCoordinateMap:
+	"""Class representing maps from coordinates in the rendering of a
+	bootchart to processes. A map is implemented as a tree of regions
+	(giving by the region's bounding box).
+
+	As an invariant consumers of the class should ensure that the
+	children of a node is non-overlapping in the coordinate space."""
+	def __init__(self, bounding_box, process, children):
+		self.bounding_box = bounding_box
+		self.process = process
+		self.children = children
+
+	def __str__(self):
+		p1 = "%s -> %s" % (str(self.bounding_box), self.process.cmd if self.process else "none")
+		p2 = [ str(c) for c in self.children ]
+		return "\n".join([p1] + p2)
+
+	def lookup_with_bounding_box(self, x, y):
+		if in_bounding_box(self.bounding_box, x, y):
+			for c in self.children:
+				pandbbox = c.lookup_with_bounding_box(x,y)
+				if pandbbox: return pandbbox
+			return self.process, self.bounding_box
+		else:
+			return None
+	def lookup(self, x, y):
+		pandbbox = self.lookup_with_bounding_box(x, y)
+		if pandbbox: return pandbbox[0]
+		else: return None
+			
+
+def _find_first(seq, pred):
+	"""Find the first element in the specified sequence satisfying
+	the specified predicate. If no such element exists None is returned."""
+	for x in seq:
+		if pred(x): return x
+	return None
+
+def in_bounding_box(bbox, x, y):
+	"""Determine if the specified point is within the specified bounding
+	box."""
+	return bbox[0] <= x <= bbox[2] and bbox[1] <= y <= bbox[3]
+
+def _join_bounding_boxes(bbox1, bbox2):
+	"""Join two bounding boxes.
+	Computes a (new) bounding box encompassing both specified boxes."""
+	if not bbox1:
+		return bbox2[0], bbox2[1], bbox2[2], bbox2[3]
+	x1 = bbox1[0] if bbox1[0] < bbox2[0] else bbox2[0]
+	x2 = bbox1[2] if bbox1[2] > bbox2[2] else bbox2[2]
+	y1 = bbox1[1] if bbox1[1] < bbox2[1] else bbox2[1]
+	y2 = bbox1[3] if bbox1[3] > bbox2[3] else bbox2[3]
+	return x1,y1,x2,y2

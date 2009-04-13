@@ -39,6 +39,7 @@ class PyBootchartWidget(gtk.DrawingArea):
 		self.hadj = None
 		self.vadj = None
 
+		self.current_bounding_box = None # bounding box of currently hovered over process
 	def do_expose_event(self, event):
 		cr = self.window.cairo_create()
 
@@ -56,7 +57,7 @@ class PyBootchartWidget(gtk.DrawingArea):
 		cr.paint()
                 cr.scale(self.zoom_ratio, self.zoom_ratio)
                 cr.translate(-self.x, -self.y)
-		draw.render(cr, *self.res)
+		self.process_coordinate_map = draw.render(cr, *self.res)
 
 	def position_changed(self):
 		self.emit("position-changed", self.x, self.y)
@@ -134,8 +135,8 @@ class PyBootchartWidget(gtk.DrawingArea):
 
         def on_area_motion_notify(self, area, event):
                 state = event.state
+		x, y = int(event.x), int(event.y)
                 if state & gtk.gdk.BUTTON2_MASK or state & gtk.gdk.BUTTON1_MASK:
-                        x, y = int(event.x), int(event.y)
                         # pan the image
                         self.x += (self.prevmousex - x)/self.zoom_ratio
                         self.y += (self.prevmousey - y)/self.zoom_ratio
@@ -143,6 +144,14 @@ class PyBootchartWidget(gtk.DrawingArea):
                         self.prevmousex = x
                         self.prevmousey = y
 			self.position_changed()
+		else:
+			if self.current_bounding_box and draw.in_bounding_box(self.current_bounding_box, x, y):
+				return True
+			pandbbox = self.process_coordinate_map.lookup_with_bounding_box(x, y)
+			if pandbbox:
+				self.current_bounding_box = pandbbox[1]
+				print pandbbox[0].cmd
+			
                 return True
 
 	def on_set_scroll_adjustments(self, area, hadj, vadj):
